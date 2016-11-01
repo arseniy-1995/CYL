@@ -1,0 +1,19 @@
+reset
+set multiplot layout 2,2 title "Гистограммы пространственного распределения частиц, вылетающих из цилиндра" font ",14"
+set xlabel "abs(R), мм"
+set ylabel "N(abs(R))"
+set grid
+set xtics 5
+set xrange [0:60]
+set key box opaque
+set style data boxes
+set title "Гистограмма"
+plot "out.txt" using 6:4 title "N"
+set title "Сплошной линией"
+plot "out.txt" using 6:4 w l title "N"
+set style data boxes
+set title "Гистограмма (нормирована)"
+plot "out.txt" using 6:5 title "N"
+set title "Сплошной линией (нормирована)"
+plot "out.txt" using 6:5 w l title "N"
+unset multiplot

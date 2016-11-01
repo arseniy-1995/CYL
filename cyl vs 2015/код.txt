@@ -1,0 +1,868 @@
+// cyl.cpp: определяет точку входа для консольного приложения.
+//
+//#define _CRT_SECURE_NO_WARNINGS
+#include "stdafx.h"
+#include <fstream>
+#include <iomanip>
+#include <stdlib.h>
+#define _USE_MATH_DEFINES
+#include <math.h>
+#include <cmath> 
+#include <iostream>
+#include "float.h"
+#include <time.h>
+#include <random>
+#include <ctime>
+#include <conio.h>
+#include <windows.h>
+#include <omp.h> // многопоточность процессора
+
+
+
+
+using namespace std;
+// функция подсчета длины массива
+template<typename T> inline int arrlen(T *arr) {
+	return static_cast<int>(_msize(arr) / sizeof(T));
+}
+
+
+// Функция, генерирующая случайное действительное число от min до max
+double random(double min, double max)
+{
+	//задаем параметр случайности
+	srand((unsigned int)time(NULL) + rand()); // привязка генератора случайных чисел к системному времени
+	return (double)rand() / RAND_MAX * (max - min) + min;
+
+}
+
+
+
+// поворот вокруг оси z
+
+void rotate(double x0, double y0, double z0, double &x, double &y, double &z) {
+	double	temp_x = x;
+	double	temp_y = y;
+	double	temp_z = z;
+
+
+	double alpha;
+	alpha = atan2(y0, x0);
+	x = temp_x*cos(alpha) + temp_y*sin(alpha);
+	y = -temp_x*sin(alpha) + temp_y*cos(alpha);
+	z = temp_z;
+}
+
+// обратная матрица поворота
+void rotate_1(double x0, double y0, double z0, double &x, double &y, double &z) {
+	double	temp_x = x;
+	double	temp_y = y;
+	double	temp_z = z;
+	double alpha;
+	alpha = atan2(y0, x0);
+
+
+
+	x = temp_x*cos(alpha) - temp_y*sin(alpha);
+	y = temp_x*sin(alpha) + temp_y*cos(alpha);
+	z = temp_z;
+
+
+}
+
+
+// Функция, строящая функцию распределения(гистограмму) числа частиц, попавших в бины гистограммы, распределение по радиусу
+
+// гистограмма распределения по радиусу с учетом знака координаты y (проинтегрировано по половине полного угла)
+double **histo_x(double **mass_histo, int N_histo, double x, double y, double R1) {
+
+
+	double h = 2.0*R1 / N_histo; // ширина бина
+	double r;
+	r = pow(pow(x, 2.0) + pow(y, 2.0), 1.0 / 2.0); // текущий радиус
+
+
+	for (int i = 0; i < N_histo / 2; i = i + 1) { // перебираем бины
+
+		if ((r > (R1 - h*(i + 1.0))) && (r <= (R1 - h*i)) && (y <= 0))
+		{
+			mass_histo[i][0] = mass_histo[i][0] + 1; // если частица попала в бин, то содержимое бина увеличилось на одну частицу
+
+		}
+
+		if ((r > (R1 - h*(i + 1.0))) && (r <= (R1 - h*i)) && (y > 0))
+		{
+			mass_histo[N_histo - 1 - i][0] = mass_histo[N_histo - 1 - i][0] + 1; // если частица попала в бин, то содержимое бина увеличилось на одну частицу
+
+		}
+
+	}
+	return mass_histo;
+}
+
+
+// гистограмма распределения по модулю радиусу (проинтегрировано по полному углу)
+double **histo_r(double **mass_histo, int N_histo, double x, double y, double R1) {
+
+
+	double h = R1 / N_histo; // ширина бина
+	double r;
+	r = pow(pow(x, 2.0) + pow(y, 2.0), 1.0 / 2.0); // текущий радиус
+
+
+	for (int i = 0; i < N_histo; i = i + 1) { // перебираем бины
+
+		if ((r > (R1 - h*(i + 1.0))) && (r <= (R1 - h*i)))
+		{
+			mass_histo[N_histo - 1 - i][0] = mass_histo[N_histo - 1 - i][0] + 1; // если частица попала в бин, то содержимое бина увеличилось на одну частицу
+
+		}
+
+
+	}
+	return mass_histo;
+}
+
+void mass_histo_out(double **arr) { // печать содержимого двумерного массива в терминале
+	int lenrow = arrlen(arr);
+	int lencol = arrlen(arr[0]);
+	for (int i = 0; i < lenrow; ++i) {
+		std::cout << "[ ";
+		for (int j = 0; j < lencol; ++j) {
+
+			std::cout << std::fixed << std::setprecision(3) << arr[i][j] << " ";
+		}
+
+		std::cout << "]" << std::endl;
+	}
+}
+
+
+
+// время контакта с цилиндром для частиц, испущенных с кольца
+double time1(double r, double phi, double psi, double theta, double R, double V_0) // определение времени момента столкновение со стенкой цилиндра, частица испущена с торца
+{
+	double t = 0.0;
+	t = (-r*cos(phi - psi) + pow(pow(R, 2.0) - pow(r, 2.0)*pow(sin(phi - psi), 2.0), 1.0 / 2.0)) / (sin(theta));
+	//return t / V_0;
+	return t;
+
+}
+
+// время контакта с плоскостью z=h для частиц, испущенных с кольца
+double time1_(double h, double theta, double V_0) // частица испущена с торца
+{
+	double t = 0.0;
+	t = h / cos(theta);
+	//	return t / V_0;
+	return t;
+
+}
+
+
+
+// время контакта с плоскостью с цилиндром для частиц, испущенных со стенки цилиндра
+double time2(double psi, double theta, double R, double V_0) // определение времени момента столкновение со стенкой цилиндра, частица испущена с поверхности цилиндра
+{
+	double t = 0.0;
+	t = (2.0*R) / (cos(theta)*(1.0 + tan(theta)*sin(psi)*tan(theta)*sin(psi)));
+	//t = (2.0*R) / cos(theta);
+	//return t / V_0;
+	return t;
+
+}
+
+// время контакта с плоскостью z=h для частиц, испущенных со стенки цилиндра
+double time2_(double z0, double x0, double h, double theta, double psi, double V_0) //  частица испущена с поверхности цилиндра
+{
+	double t = 0.0;
+	/*
+	if (x0 >= 0) {
+		t = (z0 - h) / (sin(theta)*cos(psi));
+	}
+	else {
+		t = -(z0 - h) / (sin(theta)*cos(psi));
+	}
+
+	*/
+
+	t = (z0 - h) / (sin(theta)*cos(psi));
+	t = abs(t);
+	//return t / V_0;
+	return t;
+
+}
+
+// вычисление координат после вылета из торца цилиндра
+void func1(double &x, double &y, double &z, double r, double phi, double psi, double theta, double t, double V_0) { // передача аргументов по ссылке
+//	t = t*V_0;
+	z = t*cos(theta);
+	y = r*sin(phi) + t*sin(theta)*sin(psi);
+	x = r*cos(phi) + t*sin(theta)*cos(psi);
+
+}
+
+// вычисление координат после вылета с поверхности цилиндра с учетом того, что частица снова окажется на цилиндре
+void func2(double &x, double &y, double &z, double x0, double y0, double z0, double R, double psi, double theta, double t, double V_0) { // передача аргументов по ссылке
+//	t = t*V_0;
+
+
+
+	z = z0 - t*sin(theta)*cos(psi);
+	y = t*sin(theta)*sin(psi);
+	x = R - t*cos(theta);
+
+	/*
+
+		rotate(x0, y0, z0, x0,y0,z0);
+
+
+		if (x0 >= 0) {
+			z = z0 - t*sin(theta)*cos(psi);
+			y = y0+t*sin(theta)*sin(psi);
+			x = x0 - t*cos(theta);
+		}
+		else {
+			z = z0 - t*sin(theta)*cos(psi);
+			y = y0-t*sin(theta)*sin(psi);
+			x = x0-R + t*cos(theta);
+
+		}
+
+	*/
+
+	rotate_1(x0, y0, z0, x, y, z);
+
+
+	/*
+
+		if (x0 >= 0) {
+			z = z0 - t*sin(theta)*cos(psi);
+			y = t*sin(theta)*sin(psi);
+			x = R - t*cos(theta);
+		}
+		else {
+			z = z0 - t*sin(theta)*cos(psi);
+			y = -t*sin(theta)*sin(psi);
+			x = -R + t*cos(theta);
+	}
+
+	*/
+
+
+
+}
+
+
+// вычисление координат после вылета с поверхности цилиндра с учетом того, что частица попадает на плоскость z=h
+void func22(double &x, double &y, double &z, double x0, double y0, double z0, double R, double psi, double theta, double t, double V_0) { // передача аргументов по ссылке
+																																		 //	t = t*V_0;
+	z = z0 + t*sin(theta)*cos(psi);
+	y = t*sin(theta)*sin(psi);
+	x = R - t*cos(theta);
+
+	/*
+
+	if (x0 >= 0) {
+		z = z0 + t*sin(theta)*cos(psi);
+		y = t*sin(theta)*sin(psi);
+		x = R - t*cos(theta);
+	}
+	else {
+		z = z0 + t*sin(theta)*cos(psi);
+		y = -t*sin(theta)*sin(psi);
+		x = -R + t*cos(theta);
+
+	}
+
+	*/
+
+	/*
+
+	rotate(x0, y0, z0, x0, y0, z0);
+
+
+		if (x0 >= 0) {
+			z = z0 + t*sin(theta)*cos(psi);
+			y = y0 + t*sin(theta)*sin(psi);
+			x = x0 - t*cos(theta);
+		}
+		else {
+			z = z0 + t*sin(theta)*cos(psi);
+			y = y0 - t*sin(theta)*sin(psi);
+			x = x0 - R + t*cos(theta);
+
+		}
+
+
+	*/
+
+
+
+	rotate_1(x0, y0, z0, x, y, z);
+
+
+
+
+}
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+	setlocale(LC_ALL, "rus"); // корректное отображение Кириллицы
+	cout << endl;
+	cout << "Добро Пожаловать В Программу CYL.EXE" << endl;
+
+	double  R1, R2, R3, L, V_0;// начальные данные, радиус 1, радиус 2,радиус 3, длина цилиндра, начальная скорость
+	int  N, N_histo; // начальное число частиц, число бинов гистограммы распределения
+
+
+	double b; // коэффициент захвата частицы поверхность цилиндра
+	int N1 = 0, N2 = 0, N3 = 0, N4 = 0, N5 = 0, N6 = 0, N7 = 0;// переменные для подсчета числа частиц
+	// объявление одномерного динамического массива на n элементов входных начальных данных:										   
+	int n = 8;
+	double *mass = new double[n]; // одномерный массив входных параметров
+
+	fstream F;
+	//открываем файл с входными данными в режиме чтения
+	cout << endl;
+	cout << "Открытие файла с входными данными..." << endl;
+	F.open("in.txt");
+	//если открытие файла прошло корректно, то
+	if (F)
+	{
+		//цикл для чтения значений из файла; выполнение цикла прервется,
+		//когда достигнем конца файла, в этом случае F.eof() вернет истину.
+		int i = 0; // индекс массива
+		cout << "Чтение данных..." << endl;
+
+		setlocale(LC_ALL, "C"); // установить используемую системой локаль для корректной отображении точки в выходном файле
+		while (!F.eof())
+		{
+			Sleep(350); // пауза для того, чтобы успеть прочитать информацию
+			//чтение очередного значения из потока F в переменную mass
+			cout << " .";
+			F >> mass[i];
+			i = i + 1;
+
+		}
+
+		setlocale(LC_ALL, "rus"); // корректное отображение Кириллицы
+
+		cout << endl;
+		cout << "Чтение данных завершено." << endl;
+		//закрытие потока
+		F.close();
+
+	}
+
+	//если открытие файла прошло некорректно, то вывод
+	//сообщения об отсутствии такого файла
+	else {
+		cout << " Входной файл не существует." << endl;
+	}
+
+	// присваиваем данные из входного файла начальным константам задачи
+
+	R1 = mass[0]; // большой радиус цилиндра
+	R2 = mass[1]; // внешний радиус кольца
+	R3 = mass[2]; // внутренний радиус кольца
+	L = mass[3]; // длина цилиндра
+	V_0 = mass[4]; // начальная скорость
+	b = mass[5];
+	N = (int)mass[6]; // число частиц
+	N_histo = (int)mass[7]; //число бинов гистограммы распределения
+
+	// вывод начальных значений на экран
+
+	cout << endl;
+	cout << "Входные данные:" << endl;
+	cout << endl;
+	cout << "R1 ||" << " R2 ||" << " R3 ||" << " L ||" << " Скорость ||" << " Коэфф. Захвата ||" << " Число Частиц ||" << " Число Бинов" << endl;
+	cout << endl;
+	for (int i = 0; i < n; i++) {
+		cout << mass[i] << "  \t";
+
+
+	}
+	cout << endl;
+
+	// массив для функцию распределения(гистограммы) числа частиц, попавших в бины гистограммы
+	// объявление двумерного динамического массива на N_histo*2 элементов:
+	// массивколичества частиц попавших в каждый бин, всего бинов N_histo, второй столбец двумерного массива это координата левого конца бина
+	double **mass_histo_x = new double*[N_histo]; // N_histo строк в массиве
+	for (int count = 0; count < N_histo; count++)
+		mass_histo_x[count] = new double[2]; // и два столбца
+										   //  где mass_histo  – массив указателей на выделенный участок памяти под массив вещественных чисел  типа double
+
+	double h_x = 2.0*R1 / N_histo; // ширина бина
+
+								   // заполнение массива
+	for (int count_row = 0; count_row < N_histo; count_row++) {
+		mass_histo_x[count_row][0] = 0; // превый столбец 0, в начале число частиц в каждом бине ноль
+		mass_histo_x[count_row][1] = -1.0*R1 + 1.0*h_x*count_row; // второй столбец это координата левого конца бина
+
+	}
+
+
+
+	double **mass_histo_r = new double*[N_histo / 2]; // N_histo строк в массиве
+	for (int count = 0; count < N_histo / 2; count++)
+		mass_histo_r[count] = new double[2]; // и два столбца
+											 //  где mass_histo  – массив указателей на выделенный участок памяти под массив вещественных чисел  типа double
+
+	double h_r = 2.0*R1 / (N_histo); // ширина бина
+
+								 // заполнение массива
+	for (int count_row = 0; count_row < N_histo / 2; count_row++) {
+		mass_histo_r[count_row][0] = 0; // превый столбец 0, в начале число частиц в каждом бине ноль
+		mass_histo_r[count_row][1] = h_r*count_row; // второй столбец это координата левого конца бина
+
+	}
+
+	Sleep(600); // пауза для того, чтобы успеть прочитать информацию
+	cout << endl;
+	cout << "Условные обозначения:" << endl;
+	cout << endl;
+	cout << "......\t " << "Частицы, которые сразу вышли из усточника и не коснулись стенок," << endl;
+	cout << "++++++\t " << "Частицы, которые хотя бы раз коснулись стенок и вышли из источника." << endl;
+	cout << endl;
+	Sleep(600); // пауза для того, чтобы успеть прочитать информацию
+	cout << "Далее будут выводится столбцы с информацие о частицах на вылете из цилиндра...." << endl;
+	cout << endl;
+	cout << "X ||" << " Y ||" << " Z ||" << " R ||" << " № частицы ||" << " % выполнения программы ||" << " время с начала счета, сек" << endl;
+	cout << endl;
+	Sleep(600); // пауза для того, чтобы успеть прочитать информацию
+	cout << "Нажми на клавишу ENTER для продолжения расчетов." << endl;
+
+	while (true) {
+
+		//cout << " .";
+		//Sleep(400); // пауза для того, чтобы успеть прочитать информацию
+
+
+		if (_getch() == VK_RETURN)
+		{
+
+			cout << endl;
+			cout << "Вы нажали ENTER." << endl;
+
+			break;
+		}
+		else {
+			cout << endl;
+			cout << "Вы нажали какую то клавишу, но точно не enter, повторите снова..." << endl;
+			cout << endl;
+
+		}
+
+
+
+
+
+		cout << endl;
+		continue;
+
+	}
+
+
+
+
+
+
+
+
+
+
+
+
+
+	Sleep(1000); // пауза для того, чтобы успеть прочитать информацию
+
+	cout << endl;
+	printf("Идет расчет... Ждите... Примерное время счета равно=%.3f мин.\n", (double)(N * 20.0) / (pow(10.0, 6.0) * 60));
+	//cout << "Идет расчет... Ждите...Примерное время счета равно=" << N*20/(pow(10.0,5.0)*60)<< "мин."<< endl;
+	cout << endl;
+	Sleep(1000); // пауза для того, чтобы успеть прочитать информацию
+	unsigned int start_time = clock(); // начальное время
+
+#pragma omp parallel
+	{
+#pragma omp for // распараллеливание большого цикла на многопоточность
+
+	for (int i = 1; i <= N; i = i + 1) {
+
+		double x = 0.0, y = 0.0, z = 0.0, r = 0.0; // промежуточные переменные, начальные углы вылета
+
+
+		srand((unsigned int)time(NULL) + rand()); // привязка генератора случайных чисел к системному времени
+
+		// генерируем случайные величины с помощью пользовательской функции random()
+		x = random(-R1, R1); // от -R1 до R1
+		srand((unsigned int)time(NULL) + rand()); // привязка генератора случайных чисел к системному времени
+		y = random(-R1, R1); // от -R1 до R1
+	//	z = 0.0; // частицы вылетают из левого торца цилиндра
+		r = pow(pow(x, 2.0) + pow(y, 2.0), 1.0 / 2.0); // текущий радиус
+	//	double t1 = 0.0, t2 = 0.0; // время контакта со стенкой при вылете частицы с торца, время контакта со стенкой при вылете частицы с поверхности цилиндра
+		;
+		if ((r <= R2) && (r >= R3))
+		{
+
+			double theta_0, phi_0, psi_0;// V_z, V_p, V_r, V_phi
+
+			N1 = N1 + 1;
+			srand((unsigned int)time(NULL) + rand()); // привязка генератора случайных чисел к системному времени
+			//theta_0 = acos(pow(1.0 - pow(random(0.0, 1.0), 2.0), 1.0 / 2.0)); // от -pi/2 до pi распределена по закону cos(), получена методом обратной функции
+			//theta_0 = asin(pow(random(0.0, 1.0), 1.0 / 2.0));
+			theta_0 = asin(random(0.0, 1.0));// от 0 до pi/2 распределена по закону cos(), получена методом обратной функции, максимум вероятности при theta=0
+			srand((unsigned int)time(NULL) + rand()); // привязка генератора случайных чисел к системному времени
+			phi_0 = random(0.0, 2.0*M_PI); //от 0 до 2*pi равномерно распределена
+			srand((unsigned int)time(NULL) + rand()); // привязка генератора случайных чисел к системному времени
+			psi_0 = random(0.0, 2.0*M_PI); //от 0 до 2*pi равномерно распределена
+			//r = pow(pow(x, 2.0) + pow(y, 2.0), 1.0 / 2.0); // текущий радиус
+			double x_0, y_0, z_0; // координаты после первого саударения со стенкой
+			double x_, y_, z_; // координаты после дальнейших саударений со стенкой внутри цилиндра
+
+				// определяем время контакта со стенкой
+			double t1 = 0;
+			t1 = time1(r, phi_0, psi_0, theta_0, R1, V_0);
+
+
+			// вычисление координат саударения со стенкой сразу после вылета из торца цилиндра
+			func1(x_0, y_0, z_0, r, phi_0, psi_0, theta_0, t1, V_0);
+			//	cout << x_0 << "    " << y_0 << "    " << z_0 << "    " <<pow(x_0*x_0+y_0*y_0,1.0/2.0)<< endl;
+
+
+			if (z_0 <= 0) {
+				N3 = N3 + 1;
+				continue;
+			}
+
+			if (z_0 >= L) {
+				cout << "......" << endl;
+				N5 = N5 + 1;
+				N2 = N2 + 1;
+				t1 = time1_(L, theta_0, V_0);
+				// вычисление координат саударения со стенкой сразу после вылета из торца цилиндра
+				func1(x_0, y_0, z_0, r, phi_0, psi_0, theta_0, t1, V_0);
+				double r_0 = pow(pow(x_0, 2.0) + pow(y_0, 2.0), 1.0 / 2.0); // текущий радиус после первого саударения
+				double procent = ((double)i / N)*100.0;
+				unsigned int end_time = clock(); // текущее время
+				unsigned int search_time = end_time - start_time; // искомое время в миллисекундах
+				printf("%+.3f %+.3f %.3f %.3f %.3e %.3f %.2f\n", x_0, y_0, z_0, r_0, (double)i, procent, (double)search_time / 1000.0);
+				//cout << x_0 << "  " << y_0 << "  " << z_0 << "    " << r_0 << endl;
+				mass_histo_x = histo_x(mass_histo_x, N_histo, x_0, y_0, R1);
+				mass_histo_r = histo_r(mass_histo_r, N_histo / 2, x_0, y_0, R1);
+				continue;
+
+			}
+
+
+
+			double z__0 = z_0;
+			double x__0 = x_0;
+			double y__0 = y_0;
+			double theta__0 = M_PI_2 - theta_0;
+			double psi__0 = phi_0;
+			if ((z_0 < L) && (z_0 > 0)) {
+
+				for (;;) {
+
+
+					srand((unsigned int)time(NULL) + rand()); // привязка генератора случайных чисел к системному времени
+
+
+					double mu = random(0.0, 1.0); // случайное число для учета захвата частицы поверхностью цилиндра
+
+					if (mu <= b) {
+						N7 = N7 + 1; // подсчет числа захваченных частиц
+						break;
+					}
+
+					else {
+
+						double t2 = 0;
+
+						double theta_ = 0.0, psi_ = 0.0, r_ = 0.0; // радиус и углы внутри цидиндра
+
+																   // генерация новых углов после каждого соударения со стенкой
+																   //theta_ = acos(pow(1.0 - pow(random(0.0, 1.0), 2.0), 1.0 / 2.0)); // от -pi/2 до pi/2 распределена по закону cos(), получена методом обратной функции
+						srand((unsigned int)time(NULL) + rand()); // привязка генератора случайных чисел к системному времени
+																  //theta_ = asin(pow(random(0.0, 1.0) , 1.0 / 2.0));
+																  //theta_ = asin(random(0.0, 1.0));
+						theta_ = theta__0 - 1.0*asin(random(-1.0*(sin(M_PI_2 - theta__0)), sin(theta__0)));// от 0 до pi/2 распределена по закону cos(), наиболее вероятное значение при theta=theta_
+						srand((unsigned int)time(NULL) + rand()); // привязка генератора случайных чисел к системному времени
+						//psi_ = random(0.0, 2.0*M_PI); //от 0 до 2*pi равномерно распределена
+						psi_ = psi__0 + M_PI + random(-1.0*M_PI, M_PI);
+						t2 = time2(psi_, theta_, R1, V_0); // время до следующего саударения
+
+						//func2(x_, y_, z_, R1, 0, L/2.0, R1, psi_, theta_, t2, V_0);// вычисление последующих координат саударения со стенкой
+						func2(x_, y_, z_, x__0, y__0, z__0, R1, psi_, theta_, t2, V_0);// вычисление последующих координат саударения со стенкой
+						//cout << "++++++" << endl;
+					//cout << x_ << "  " << y_ << "  " << z_ << "    " << pow(x_*x_ + y_*y_, 1.0 / 2.0) << endl;
+						//cout << "++++++" << endl;
+						if (z_ <= 0) {
+							N3 = N3 + 1;
+							break;
+						}
+						if (z_ >= L) {
+
+							cout << "++++++" << endl;
+							N6 = N6 + 1;
+							N2 = N2 + 1;
+							x__0 = x_;
+							y__0 = y_;
+							z__0 = z_;
+
+							t2 = time2_(z__0, x__0, L, theta_, psi_, V_0);
+							//t2 = time2(phi_, psi_, theta_, R1, V_0); // время до следующего саударения
+
+
+							func22(x_, y_, z_, x__0, y__0, z__0, R1, psi_, theta_, t2, V_0);
+							r_ = pow(pow(x_, 2.0) + pow(y_, 2.0), 1.0 / 2.0); // текущий радиус
+							double procent = ((double)i / N)*100.0;
+							unsigned int end_time = clock(); // текущее время
+							unsigned int search_time = end_time - start_time; // искомое время в миллисекундах
+							printf("%+.3f %+.3f %.3f %.3f %.3e %.3f %.2f\n", x_, y_, z_, r_, (double)i, procent, (double)search_time / 1000.0);
+							//cout << x_ << "  " << y_ << "  " << z_ << "    " << r_ << endl;
+							mass_histo_x = histo_x(mass_histo_x, N_histo, x_, y_, R1);
+							mass_histo_r = histo_r(mass_histo_r, N_histo / 2, x_, y_, R1);
+
+
+
+							break;
+						}
+
+
+
+						if ((z_ < L) && (z_ > 0)) {
+							//	cout << "++++++" << endl;
+							//	cout << x_ << "  " << y_ << "  " << z_ << "    " << pow(x_*x_ + y_*y_, 1.0 / 2.0) << endl;
+								//mass_histo = histo(mass_histo, N_histo, x_, y_, R1);
+
+
+							x__0 = x_;
+							y__0 = y_;
+							z__0 = z_;
+							theta__0 = theta_;
+							psi__0 = psi_;
+							//r_ = pow(pow(x_, 2.0) + pow(y_, 2.0), 1.0 / 2.0); // текущий радиус
+							continue; // считаем цикл до тех пор, пока частица не вылетит из цилиндра
+						}
+
+
+
+
+					}
+
+
+
+				}
+				continue;
+			}
+
+
+
+
+
+
+
+			continue;
+		}
+
+		else {
+			continue;// переход на следующую итерацию цикла при нарушении условия if
+		}
+
+
+
+	}
+
+	}
+
+	Sleep(1000); // пауза для того, чтобы успеть прочитать информацию
+	cout << endl;
+	cout << "Выходные данные: Гистограмма распределения по радиусу" << endl;
+	cout << endl;
+	cout << "Первый столбец: Число частиц, попавших в бин ||" << " Второй столбец: Координата левого конца бина" << endl;
+	cout << endl;
+
+	Sleep(1000); // пауза для того, чтобы успеть прочитать информацию
+
+	mass_histo_out(mass_histo_x);
+
+
+
+	// вывод полученных результатов в файл
+	FILE *fd1;
+	fopen_s(&fd1, "out_x.txt", "wb");
+	if (fd1 == NULL) {
+		fprintf(stderr, "Ошибка открытия выводного файла.\n");
+		cout << endl;
+		exit(1);
+	}
+	else {
+		fprintf(fd1, "\n");
+		fprintf(fd1, "### \n");
+		fprintf(fd1, "### Число Частиц в Бине || Нормированное Значение || Координата Левого Конца Бина \n");
+		fprintf(fd1, "### \n");
+		fprintf(fd1, "\n");
+		setlocale(LC_ALL, "C"); // установить используемую системой локаль для корректной отображении точки в выходном файле
+		for (int i = 0; i < arrlen(mass_histo_x); i++) {
+			if (N2 == 0) {// исключение надписи nan(ind)
+				fprintf(fd1, "%.0f %.0f %f\n", mass_histo_x[i][0], 0.0, mass_histo_x[i][1]);
+			}
+			else {
+				fprintf(fd1, "%.0f %.5e %f\n", mass_histo_x[i][0], (double)mass_histo_x[i][0] / N2, mass_histo_x[i][1]);
+
+			}
+
+		}
+		setlocale(LC_ALL, "rus"); // корректное отображение Кириллицы
+
+		fprintf(fd1, "\n");
+		fprintf(fd1, "### \n");
+		fprintf(fd1, "### R1=%.1f R2==%.1f R3=%.1f L=%.1f Скорость=%.1f Коэфф. Захвата=%.1e Число Частиц=%.1e Число Бинов=%.0f\n", R1, R2, R3, L, V_0, b, (double)N, (double)N_histo);
+		//cout << "R1 ||" << " R2 ||" << " R3 ||" << " L ||" << " Скорость ||" << " Коэфф. Захвата ||" << " Число Частиц ||" << " Число Бинов" << endl;
+		fprintf(fd1, "### \n");
+		fprintf(fd1, "### Полное число частиц брошенных в квадрат, описанный вокруг торца цилиндра %.1e\n", (double)N);
+		fprintf(fd1, "### Число частиц выпущенных из кольца источником %.0f\n", (double)N1);
+		fprintf(fd1, "### Полное число частиц, которые вышли из цилиндра %.0f\n", (double)N2);
+		fprintf(fd1, "### Число частиц, которые вернулись обратно в источник %.0f\n", (double)N3);
+		fprintf(fd1, "### Число частиц, которые были захвачены поверхностью цилиндра %.0f\n", (double)N7);
+		fprintf(fd1, "### \n");
+		fprintf(fd1, "### Число частиц, которые сразу вышли из усточника и не коснулись стенок %.0f\n", (double)N5);
+		fprintf(fd1, "### Число частиц, которые хотя бы раз коснулись стенок и вышли из источника %.0f\n", (double)N6);
+		fprintf(fd1, "### \n");
+		fprintf(fd1, "### N_out/N_in=%.5f\n", ((double)N2 / (double)N1));
+		fprintf(fd1, "### R/L=%.5f\n", ((double)R1 / (double)L));
+		fprintf(fd1, "### k=(N_out/N_in)/(R/L)=%.5f\n", ((double)N2 / (double)N1) / ((double)R1 / (double)L));
+		fprintf(fd1, "### \n");
+
+	}
+
+
+
+
+
+
+	// вывод полученных результатов в файл
+	FILE *fd2;
+	fopen_s(&fd2, "out_r.txt", "wb");
+	if (fd2 == NULL) {
+		fprintf(stderr, "Ошибка открытия выводного файла.\n");
+		cout << endl;
+		exit(1);
+	}
+	else {
+
+		fprintf(fd2, "\n");
+		fprintf(fd2, "### \n");
+		fprintf(fd2, "### Число Частиц в Бине || Нормированное Значение || Координата Левого Конца Бина \n");
+		fprintf(fd2, "### \n");
+		fprintf(fd2, "\n");
+		setlocale(LC_ALL, "C"); // установить используемую системой локаль для корректной отображении точки в выходном файле
+		for (int i = 0; i < arrlen(mass_histo_r); i++) {
+			if (N2 == 0) { // исключение надписи nan(ind)
+				fprintf(fd2, "%.0f %.0f %f\n", mass_histo_r[i][0], 0.0, mass_histo_r[i][1]);
+			}
+			else {
+				fprintf(fd2, "%.0f %.5e %f\n", mass_histo_r[i][0], (double)mass_histo_r[i][0] / N2, mass_histo_r[i][1]);
+
+			}
+		}
+		setlocale(LC_ALL, "rus"); // корректное отображение Кириллицы
+
+
+		fprintf(fd2, "\n");
+		fprintf(fd2, "### \n");
+		fprintf(fd2, "### R1=%.1f R2==%.1f R3=%.1f L=%.1f Скорость=%.1f Коэфф. Захвата=%.1e Число Частиц=%.1e Число Бинов=%.0f\n", R1, R2, R3, L, V_0, b, (double)N, (double)N_histo);
+		//cout << "R1 ||" << " R2 ||" << " R3 ||" << " L ||" << " Скорость ||" << " Коэфф. Захвата ||" << " Число Частиц ||" << " Число Бинов" << endl;
+		fprintf(fd2, "### \n");
+		fprintf(fd2, "### Полное число частиц брошенных в квадрат, описанный вокруг торца цилиндра %.1e\n", (double)N);
+		fprintf(fd2, "### Число частиц выпущенных из кольца источником %.0f\n", (double)N1);
+		fprintf(fd2, "### Полное число частиц, которые вышли из цилиндра %.0f\n", (double)N2);
+		fprintf(fd2, "### Число частиц, которые вернулись обратно в источник %.0f\n", (double)N3);
+		fprintf(fd2, "### Число частиц, которые были захвачены поверхностью цилиндра %.0f\n", (double)N7);
+		fprintf(fd2, "### \n");
+		fprintf(fd2, "### Число частиц, которые сразу вышли из усточника и не коснулись стенок %.0f\n", (double)N5);
+		fprintf(fd2, "### Число частиц, которые хотя бы раз коснулись стенок и вышли из источника %.0f\n", (double)N6);
+		fprintf(fd2, "### \n");
+		fprintf(fd2, "### N_out/N_in=%.5f\n", ((double)N2 /(double) N1));
+		fprintf(fd2, "### R/L=%.5f\n",( (double)R1 / (double) L));
+		fprintf(fd2, "### k=(N_out/N_in)/(R/L)=%.5f\n", ((double)N2 / (double)N1) / ((double)R1 / (double)L));
+		fprintf(fd2, "### \n");
+	}
+
+
+
+
+
+
+	WORD ATTR = FOREGROUND_BLUE;
+	HANDLE CH = GetStdHandle(STD_OUTPUT_HANDLE);
+	SetConsoleTextAttribute(CH, ATTR);
+	cout << endl;
+	printf("Полное число частиц брошенных в квадрат, описанный вокруг торца цилиндра %.1e\n", (double)N);
+	//cout << "Поное число частиц брошенных в квадрат, описанный вокруг торца цилиндра " << N << endl;
+	cout << "Число частиц выпущенных из кольца источником " << N1 << endl;
+	cout << "Полное число частиц, которые вышли из цилиндра " << N2 << endl;
+	cout << "Число частиц, которые вернулись обратно в источник " << N3 << endl;
+	cout << "Число частиц, которые были захвачены поверхностью цилиндра " << N7 << endl;
+	cout << endl;
+	cout << "Число частиц, которые сразу вышли из усточника и не коснулись стенок " << N5 << endl;
+	cout << "Число частиц, которые хотя бы раз коснулись стенок и вышли из источника " << N6 << endl;
+	cout << endl;
+	cout << "N_out/N_in=" << ((double)N2 /(double) N1 )<< endl;
+	cout << "R/L=" << ((double)R1 / (double) L )<< endl;
+	cout << "k=(N_out/N_in)/(R/L)=" <<((double)N2 / (double) N1) /((double)R1 /(double) L) << endl;
+	cout << endl;
+
+	ATTR = FOREGROUND_GREEN;
+
+	SetConsoleTextAttribute(CH, ATTR);
+
+	cout << "Данные выведены в файл" << endl;
+	cout << endl;
+	unsigned int end_time = clock(); // конечное время
+	unsigned int search_time = end_time - start_time; // искомое время в миллисекундах
+	int search_time_ = (int)search_time / (1000 * 60); // минут
+	int search_time__ = (int)(search_time / 1000.0) % 60; // секунд
+	cout << "Время выполнения расчета: " << search_time_ << " мин. и " << search_time__ << " сек." << endl;
+	cout << endl;
+
+
+	fprintf(fd1, "### Время выполнения расчета: %.0f мин. и %.0f сек.\n", (double)search_time_, (double)search_time__);
+	fprintf(fd1, "\n");
+	fprintf(fd2, "### Время выполнения расчета: %.0f мин. и %.0f сек.\n", (double)search_time_, (double)search_time__);
+	fprintf(fd2, "\n");
+
+
+	fclose(fd1);
+	fclose(fd2);
+
+
+
+
+	delete[] mass; // высвобождение памяти одномерного динамического массива
+
+				   // удаление двумерного динамического массива гистограммы
+	for (int count = 0; count < N_histo; count++) {
+		delete[] mass_histo_x[count];
+	}
+
+	delete[] mass_histo_x;
+
+
+
+	// удаление двумерного динамического массива гистограммы
+	for (int count = 0; count < N_histo / 2; count++) {
+		delete[] mass_histo_r[count];
+	}
+
+	delete[] mass_histo_r;
+
+
+	system("pause");
+	return 0;
+}
+

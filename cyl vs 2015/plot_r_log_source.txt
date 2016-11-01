@@ -1,0 +1,22 @@
+reset
+set multiplot layout 2,2 title "Гистограммы пространственного распределения частиц, вылетающих из цилиндра в логарифмическом масштабе (УСРЕДНЕННАЯ ДЕТЕКТОРОМ)" font ",14"
+set xlabel "abs(R), координата центра детектора, мм"
+set ylabel "N(abs(R))"
+set logscale y
+set grid
+set ytics format "10^{%T}"
+set xtics 5
+#set xtics format "2^{%T}"
+set xrange [0:60]
+set key box opaque
+set style data boxes
+set title "Гистограмма"
+plot "out_source.txt" using 6:4 title "N"
+set title "Сплошной линией"
+plot "out_source.txt" using 6:4 w l title "N"
+set style data boxes
+set title "Гистограмма (нормирована)"
+plot "out_source.txt" using 6:5 title "N"
+set title "Сплошной линией (нормирована)"
+plot "out_source.txt" using 6:5 w l title "N"
+unset multiplot
